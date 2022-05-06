@@ -1,6 +1,7 @@
 # These are the functions that deal with the pipes
 
-from wire_interpreter import MessageHeader, make_message_body
+from wire_interpreter import make_message_body
+from wire_operations import MessageHeader
 
 class RevealTransfer:
     def __init__(self):
@@ -14,10 +15,13 @@ class RevealTransfer:
             await message_head.process()
             
             print(message_head)
-            message_body = make_message_body(message_head)
+            message_body = await make_message_body(message_head)
 
-            print(message_head)
+            print(message_body)
 
+
+            writer.write(message_head.data)
+            writer.write(message_body.data)
             #while not self.reader.at_eof():
             #    writer.write(await reader.read(512))
 
