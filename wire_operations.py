@@ -1,11 +1,34 @@
 import struct # for decomposing C like byte objects
+from codecs import utf_8_decode
 import asyncio
+import functools
+from utils import BinaryReader
+from collections import OrderedDict
+import operator
+import bson
+
+# for reading the bson
+CODEC_OPTIONS = bson.codec_options.CodecOptions(document_class=OrderedDict)
 
 class UnpackingFunctions:
     def Int(data):
         return (struct.Struct("<i").unpack(data))[0]
 
-#    def c_string(data):
+    # unsigned int
+    def UInt(data):
+        return (struct.Struct("<I").unpack(data)[0])
+
+    # Byte
+    def Byte(data):
+        return (struct.Struct("<b").unpack(data)[0])
+
+    def CString(data):
+        return utf_8_decode(data)
+
+    
+def get_c_string_length(reader):
+    remaining_data = reader.remaining_data()
+    return remaining_data.index(b"\x00", 0)
 
 class MessageHeader:
     read_amount = 16
@@ -38,7 +61,6 @@ class MessageHeader:
             self.components[f] = UnpackingFunctions.Int(self.data[bounds[0]:bounds[1]])
 
         # Set the body length up so i dont compute in the operation.
-        print("hey")
         self.body_length = self.components['LENGTH'] - self.read_amount
 
     def __str__(self):
@@ -78,8 +100,6 @@ class QueryOP:
 
     async def process(self):
         self.data = await self.data_reader.read(self.read_amount)
-
-        pass
         #asyncio.
 
     def __str__(self):
@@ -107,11 +127,94 @@ class KillCursorsOP:
         return ("KillCursors Operation")
 
 class MessageOP:
-    def __init__(self):
+    def __init__(self, message_header):
+        self.message_header = message_header
+        self.read_amount = message_header.body_length
+        self.data_reader = message_header.data_reader
         pass
 
+    async def process(self):
+        self.data = await self.data_reader.read(self.read_amount)
+        self.data_reader = None # do not read more data than needed
+
+        self.datafeed = BinaryReader(self.data)
+
+        self.flags = UnpackingFunctions.UInt(self.datafeed.read(4))
+
+        # Check to see if flags are reserved
+        self._check_flags_and_checksum()
+
+        # buffer for checksum if it exists at
+        # the end of the message
+        checksum_buffer = 0
+        if self.checksum_present:
+            checksum_buffer = 4
+            
+
+        payload_document = OrderedDict()
+
+        # each message is an ordered set of bson objects,
+        # or stings.
+        print(f"rem: {self.datafeed.remainder()}")
+        while (self.datafeed.remainder() - checksum_buffer > 0):
+            payload_type = UnpackingFunctions.Byte(self.datafeed.read(1))
+            payload_size = UnpackingFunctions.Int(self.datafeed.read(4))
+            
+
+
+            print(payload_type)
+            print(payload_size)
+
+            print(self.datafeed.remaining_data())
+            # BSON to decode:
+            if payload_type == 0:
+                self.datafeed.rollback(4) # rollback because this number is useful to bson
+                doc = bson.decode_all(self.datafeed.read(payload_size),
+                                      CODEC_OPTIONS)[0]
+                payload_document.update(doc)
+
+            elif payload_type == 1:
+                # Section starts w/ 4-byte size prefix, identifier ends w/ nil.
+                i_len = get_c_string_length(self.datafeed)
+
+                identifier = UnpackingFunctions.CString(self.datafeed.read(i_len))
+
+                documents_len = payload_size - len(identifier) - 1 - 4
+                docs = bson.decode_all(self.datafeed.read(documents_len),
+                                      CODEC_OPTIONS)[0]
+                payload_document[identifier] = docs
+
+            print(payload_document)
+            # String to decode:
+
+
+            # Read A bunch a data here
+
+        print (f"flags: {self.flags}")
+
+    # see of self.flags is valid:
+    def _check_flags_and_checksum(self):
+        # This code brought to you by:
+        # https://github.com/mongodb-labs/mongo-mockup-db/blob/master/mockupdb/__init__.py
+
+        OP_MSG_FLAGS = OrderedDict([
+            ('checksumPresent', 1 << 0),
+            ('moreToCome', 1 << 1),
+            ('exhaustAllowed', 1 << 16)])
+
+        _ALL_OP_MSG_FLAGS = functools.reduce(operator.or_, OP_MSG_FLAGS.values())
+
+        if self.flags & ~_ALL_OP_MSG_FLAGS:
+            raise ValueError(
+                'OP_MSG flags has reserved bits set.'
+                ' Allowed flags: 0x%x. Provided flags: 0x%x' % (
+                    _ALL_OP_MSG_FLAGS, self.flags))
+
+        self.checksum_present = self.flags & OP_MSG_FLAGS['checksumPresent']
+ 
+
     def __str__(self):
-        return ("Message Operation")
+        return ("Message Operation: " + str(self.data))
 
 OPERATION_FROM_CODE = {
     1:      ReplyOP,
