@@ -15,6 +15,7 @@ class RevealTransfer:
             await message_head.process()
             
             print(message_head)
+            
             message_body = await make_message_body(message_head)
 
             print(message_body)

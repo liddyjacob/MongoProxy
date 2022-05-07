@@ -16,9 +16,7 @@ class DirectTransfer:
     async def transfer(self, reader, writer):
         while not reader.at_eof():
             data = await reader.read(BUFFER_SIZE)
-            print(data)
             writer.write(data)
-
 
 async def proxy_pipe(reader, writer, pipe_handler):
     try:

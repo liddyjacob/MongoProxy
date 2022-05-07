@@ -56,8 +56,6 @@ class MessageHeader:
     def _decompose_data(self):
         # find each flag, extract from data.
         for (f, bounds) in self.component_locations.items():
-            print(f)
-            print(bounds)
             self.components[f] = UnpackingFunctions.Int(self.data[bounds[0]:bounds[1]])
 
         # Set the body length up so i dont compute in the operation.
@@ -149,23 +147,15 @@ class MessageOP:
         checksum_buffer = 0
         if self.checksum_present:
             checksum_buffer = 4
-            
 
         payload_document = OrderedDict()
 
         # each message is an ordered set of bson objects,
         # or stings.
-        print(f"rem: {self.datafeed.remainder()}")
         while (self.datafeed.remainder() - checksum_buffer > 0):
             payload_type = UnpackingFunctions.Byte(self.datafeed.read(1))
             payload_size = UnpackingFunctions.Int(self.datafeed.read(4))
             
-
-
-            print(payload_type)
-            print(payload_size)
-
-            print(self.datafeed.remaining_data())
             # BSON to decode:
             if payload_type == 0:
                 self.datafeed.rollback(4) # rollback because this number is useful to bson
@@ -184,13 +174,22 @@ class MessageOP:
                                       CODEC_OPTIONS)[0]
                 payload_document[identifier] = docs
 
-            print(payload_document)
+        self.document = payload_document
             # String to decode:
 
+        if self.checksum_present:
+            if self.datafeed.remainder() != 4:
+                raise ValueError(
+                    'OP_MSG has checksumPresent flag set, expected 4 bytes'
+                    ' remaining but have %d bytes remaining' % (remaining,))
 
+            self.checksum = UnpackingFunctions.UInt(self.datafeed.read(4))
+        else:
+            if self.datafeed.remainder() != 0:
+                raise ValueError(
+                    'OP_MSG has no checksumPresent flag, expected 0 bytes'
+                    ' remaining but have %d bytes remaining' % (remaining,))
             # Read A bunch a data here
-
-        print (f"flags: {self.flags}")
 
     # see of self.flags is valid:
     def _check_flags_and_checksum(self):
@@ -214,7 +213,7 @@ class MessageOP:
  
 
     def __str__(self):
-        return ("Message Operation: " + str(self.data))
+        return ("Message Operation: " + str(self.document))
 
 OPERATION_FROM_CODE = {
     1:      ReplyOP,
